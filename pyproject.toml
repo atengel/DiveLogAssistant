@@ -1,0 +1,18 @@
+[project]
+name = "aidivelog"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Alex Engel"}
+]
+readme = "README.md"
+requires-python = "<4.0,>=3.12"
+dependencies = [
+    "pyautogen>=0.2.0",
+    "autogen-ext[openai]>=0.7.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0"
+]
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
