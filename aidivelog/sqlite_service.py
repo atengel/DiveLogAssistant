@@ -103,18 +103,26 @@ class SQLiteService:
     def search_dives(
         self,
         query: str,
-        filters: Optional[Dict[str, Any]] = None,
         top_k: int = 10,
-        use_reranking: bool = True
+        location_country: Optional[str] = None,
+        location_area: Optional[str] = None,
+        location: Optional[str] = None,
+        dive_type: Optional[str] = None,
+        max_depth: Optional[int] = None,
+        min_depth: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
         Search dive logs using full-text search with optional filtering.
         
         Args:
             query: Search query text
-            filters: Optional metadata filters (e.g., {"location_country": "Egypt"})
             top_k: Number of results to return
-            use_reranking: Ignored (kept for compatibility, SQLite FTS5 handles ranking)
+            location_country: Filter by country (exact match)
+            location_area: Filter by area/region (exact match)
+            location: Filter by location matching either country or area
+            dive_type: Filter by dive type (single type, e.g., "wreck" or "recreational")
+            max_depth: Maximum depth filter (inclusive)
+            min_depth: Minimum depth filter (inclusive)
             
         Returns:
             List of dive log dictionaries with fields and metadata
@@ -123,120 +131,326 @@ class SQLiteService:
             conn = self._get_connection()
             cursor = conn.cursor()
             
-            # Build the FTS5 search query
-            if not query or query.strip() == "*":
-                # Search all if query is empty or "*"
-                fts_query = "dive_logs_fts MATCH ?"
-                fts_params = ["*"]
-            else:
-                # FTS5 uses a simple syntax: words are ANDed by default
-                # Escape special FTS5 characters and build query
-                # Replace spaces with AND for better matching
-                fts_query_text = query.replace('"', ' ').strip()
-                fts_query = "dive_logs_fts MATCH ?"
-                fts_params = [fts_query_text]
-            
             # Build WHERE clause for filters
             where_clauses = []
             params = []
             
-            if filters:
-                # Handle Pinecone-style filters
-                if "$and" in filters:
-                    # Multiple conditions
-                    and_conditions = filters["$and"]
-                    if isinstance(and_conditions, list):
-                        for condition in and_conditions:
-                            for key, value in condition.items():
-                                if isinstance(value, dict):
-                                    if "$eq" in value:
-                                        where_clauses.append(f"{key} = ?")
-                                        params.append(value["$eq"])
-                                    elif "$lte" in value:
-                                        where_clauses.append(f"{key} <= ?")
-                                        params.append(value["$lte"])
-                                    elif "$gte" in value:
-                                        where_clauses.append(f"{key} >= ?")
-                                        params.append(value["$gte"])
-                elif "$or" in filters:
-                    # OR conditions
-                    or_conditions = filters["$or"]
-                    if isinstance(or_conditions, list):
-                        or_clauses = []
-                        for condition in or_conditions:
-                            for key, value in condition.items():
-                                if isinstance(value, dict) and "$eq" in value:
-                                    or_clauses.append(f"{key} = ?")
-                                    params.append(value["$eq"])
-                        if or_clauses:
-                            where_clauses.append(f"({' OR '.join(or_clauses)})")
-                else:
-                    # Direct filter conditions
-                    for key, value in filters.items():
-                        if isinstance(value, dict):
-                            if "$eq" in value:
-                                where_clauses.append(f"{key} = ?")
-                                params.append(value["$eq"])
-                            elif "$lte" in value:
-                                where_clauses.append(f"{key} <= ?")
-                                params.append(value["$lte"])
-                            elif "$gte" in value:
-                                where_clauses.append(f"{key} >= ?")
-                                params.append(value["$gte"])
-            
-            # Build the SQL query
-            if where_clauses:
-                where_sql = " AND " + " AND ".join(where_clauses)
+            # Handle location filtering - location parameter matches either country or area
+            if location:
+                where_clauses.append("(dl.location_country = ? OR dl.location_area = ?)")
+                params.extend([location, location])
             else:
-                where_sql = ""
+                if location_country:
+                    where_clauses.append("dl.location_country = ?")
+                    params.append(location_country)
+                
+                if location_area:
+                    where_clauses.append("dl.location_area = ?")
+                    params.append(location_area)
             
-            sql = f"""
-                SELECT 
-                    dl.id,
-                    dl.content,
-                    dl.location_site,
-                    dl.location_area,
-                    dl.location_country,
-                    dl.depth_max,
-                    dl.depth_avg,
-                    dl.length_minutes,
-                    dl.dive_type,
-                    dl.highlights,
-                    dl.date,
-                    dl.time,
-                    bm25(dive_logs_fts) as score
-                FROM dive_logs_fts
-                JOIN dive_logs dl ON dive_logs_fts.rowid = dl.rowid
-                WHERE {fts_query}{where_sql}
-                ORDER BY score
-                LIMIT ?
-            """
+            if max_depth is not None:
+                where_clauses.append("dl.depth_max <= ?")
+                params.append(max_depth)
             
-            # Combine FTS params with filter params and limit
-            all_params = fts_params + params + [top_k]
+            if min_depth is not None:
+                where_clauses.append("dl.depth_max >= ?")
+                params.append(min_depth)
             
-            cursor.execute(sql, all_params)
-            rows = cursor.fetchall()
+            # Handle dive_type filtering (single string value)
+            if dive_type:
+                # Use simple equality check for exact match (case-insensitive)
+                where_clauses.append("LOWER(dl.dive_type) = LOWER(?)")
+                params.append(dive_type.strip())
             
-            # Format results
-            formatted_results = []
-            for row in rows:
-                dive_data = {
-                    "id": row["id"],
-                    "score": -row["score"] if row["score"] else 0.0,  # Negate BM25 score (lower is better in BM25, but we want higher)
-                    "content": row["content"] or "",
-                    "location_site": row["location_site"] or "",
-                    "location_area": row["location_area"] or "",
-                    "location_country": row["location_country"] or "",
-                    "depth_max": row["depth_max"],
-                    "depth_avg": row["depth_avg"],
-                    "length_minutes": row["length_minutes"],
-                    "dive_type": row["dive_type"] or "",
-                    "highlights": row["highlights"] or "",
-                    "date": row["date"] or "",
-                    "time": row["time"] or ""
-                }
-                formatted_results.append(dive_data)
+            # Determine if we should use FTS5 or query main table directly
+            has_filters = bool(where_clauses)
+            has_meaningful_query = query and query.strip() and query.strip() != "*"
+            
+            # If we have both filters and a meaningful query, run both searches separately
+            # and combine results (OR logic - return results from EITHER method)
+            if has_filters and has_meaningful_query:
+                # Run filter-only search
+                where_sql = " WHERE " + " AND ".join(where_clauses)
+                filter_sql = f"""
+                    SELECT 
+                        dl.id,
+                        dl.content,
+                        dl.location_site,
+                        dl.location_area,
+                        dl.location_country,
+                        dl.depth_max,
+                        dl.depth_avg,
+                        dl.length_minutes,
+                        dl.dive_type,
+                        dl.highlights,
+                        dl.date,
+                        dl.time,
+                        0.0 as score
+                    FROM dive_logs dl
+                    {where_sql}
+                    ORDER BY dl.date DESC, dl.time DESC
+                    LIMIT ?
+                """
+                filter_params = params + [top_k]
+                
+                # Run FTS-only search
+                fts_query_text = query.replace('"', ' ').strip()
+                fts_query = "dive_logs_fts MATCH ?"
+                # Build WHERE clause for FTS query if we have filters
+                fts_where_parts = [fts_query]
+                fts_filter_params = []
+                
+                # Apply same filters to FTS query (except dive_type which needs special handling)
+                if location:
+                    fts_where_parts.append("(dl.location_country = ? OR dl.location_area = ?)")
+                    fts_filter_params.extend([location, location])
+                else:
+                    if location_country:
+                        fts_where_parts.append("dl.location_country = ?")
+                        fts_filter_params.append(location_country)
+                    
+                    if location_area:
+                        fts_where_parts.append("dl.location_area = ?")
+                        fts_filter_params.append(location_area)
+                
+                if max_depth is not None:
+                    fts_where_parts.append("dl.depth_max <= ?")
+                    fts_filter_params.append(max_depth)
+                
+                if min_depth is not None:
+                    fts_where_parts.append("dl.depth_max >= ?")
+                    fts_filter_params.append(min_depth)
+                
+                if dive_type:
+                    # Use simple equality check for exact match (case-insensitive)
+                    fts_where_parts.append("LOWER(dl.dive_type) = LOWER(?)")
+                    fts_filter_params.append(dive_type.strip())
+                
+                fts_where_sql = " AND ".join(fts_where_parts)
+                
+                fts_sql = f"""
+                    SELECT 
+                        dl.id,
+                        dl.content,
+                        dl.location_site,
+                        dl.location_area,
+                        dl.location_country,
+                        dl.depth_max,
+                        dl.depth_avg,
+                        dl.length_minutes,
+                        dl.dive_type,
+                        dl.highlights,
+                        dl.date,
+                        dl.time,
+                        bm25(dive_logs_fts) as score
+                    FROM dive_logs_fts
+                    JOIN dive_logs dl ON dive_logs_fts.rowid = dl.rowid
+                    WHERE {fts_where_sql}
+                    ORDER BY score
+                    LIMIT ?
+                """
+                fts_params = [fts_query_text] + fts_filter_params + [top_k]
+                
+                # Execute both queries
+                cursor.execute(filter_sql, filter_params)
+                filter_rows = cursor.fetchall()
+                
+                cursor.execute(fts_sql, fts_params)
+                fts_rows = cursor.fetchall()
+                
+                # Combine results and deduplicate by ID
+                seen_ids = set()
+                formatted_results = []
+                
+                # Add filter results first
+                for row in filter_rows:
+                    dive_id = row["id"]
+                    if dive_id not in seen_ids:
+                        seen_ids.add(dive_id)
+                        dive_data = {
+                            "id": dive_id,
+                            "score": 0.0,
+                            "content": row["content"] or "",
+                            "location_site": row["location_site"] or "",
+                            "location_area": row["location_area"] or "",
+                            "location_country": row["location_country"] or "",
+                            "depth_max": row["depth_max"],
+                            "depth_avg": row["depth_avg"],
+                            "length_minutes": row["length_minutes"],
+                            "dive_type": row["dive_type"] or "",
+                            "highlights": row["highlights"] or "",
+                            "date": row["date"] or "",
+                            "time": row["time"] or ""
+                        }
+                        formatted_results.append(dive_data)
+                
+                # Add FTS results (skip duplicates)
+                for row in fts_rows:
+                    dive_id = row["id"]
+                    if dive_id not in seen_ids:
+                        seen_ids.add(dive_id)
+                        dive_data = {
+                            "id": dive_id,
+                            "score": -row["score"] if row["score"] else 0.0,  # Negate BM25 score (lower is better in BM25, but we want higher)
+                            "content": row["content"] or "",
+                            "location_site": row["location_site"] or "",
+                            "location_area": row["location_area"] or "",
+                            "location_country": row["location_country"] or "",
+                            "depth_max": row["depth_max"],
+                            "depth_avg": row["depth_avg"],
+                            "length_minutes": row["length_minutes"],
+                            "dive_type": row["dive_type"] or "",
+                            "highlights": row["highlights"] or "",
+                            "date": row["date"] or "",
+                            "time": row["time"] or ""
+                        }
+                        formatted_results.append(dive_data)
+                
+                # Limit to top_k results
+                formatted_results = formatted_results[:top_k]
+                
+            elif has_filters and not has_meaningful_query:
+                # Query main table directly when we have location filters but no text query
+                where_sql = " WHERE " + " AND ".join(where_clauses)
+                
+                sql = f"""
+                    SELECT 
+                        dl.id,
+                        dl.content,
+                        dl.location_site,
+                        dl.location_area,
+                        dl.location_country,
+                        dl.depth_max,
+                        dl.depth_avg,
+                        dl.length_minutes,
+                        dl.dive_type,
+                        dl.highlights,
+                        dl.date,
+                        dl.time,
+                        0.0 as score
+                    FROM dive_logs dl
+                    {where_sql}
+                    ORDER BY dl.date DESC, dl.time DESC
+                    LIMIT ?
+                """
+                all_params = params + [top_k]
+                
+                print(sql)
+                print(all_params)
+                cursor.execute(sql, all_params)
+                rows = cursor.fetchall()
+                
+                # Format results
+                formatted_results = []
+                for row in rows:
+                    dive_data = {
+                        "id": row["id"],
+                        "score": 0.0,
+                        "content": row["content"] or "",
+                        "location_site": row["location_site"] or "",
+                        "location_area": row["location_area"] or "",
+                        "location_country": row["location_country"] or "",
+                        "depth_max": row["depth_max"],
+                        "depth_avg": row["depth_avg"],
+                        "length_minutes": row["length_minutes"],
+                        "dive_type": row["dive_type"] or "",
+                        "highlights": row["highlights"] or "",
+                        "date": row["date"] or "",
+                        "time": row["time"] or ""
+                    }
+                    formatted_results.append(dive_data)
+            else:
+                # Use FTS5 for text-based search only
+                if not has_meaningful_query:
+                    # No query or empty query - match all
+                    fts_query = "dive_logs_fts MATCH '*'"
+                    fts_params = []
+                else:
+                    # FTS5 uses a simple syntax: words are ANDed by default
+                    # Escape special FTS5 characters and build query
+                    fts_query_text = query.replace('"', ' ').strip()
+                    fts_query = "dive_logs_fts MATCH ?"
+                    fts_params = [fts_query_text]
+                
+                # Build WHERE clause for FTS query if we have filters
+                fts_where_parts = [fts_query]
+                fts_filter_params = []
+                
+                # Apply filters to FTS query
+                if location:
+                    fts_where_parts.append("(dl.location_country = ? OR dl.location_area = ?)")
+                    fts_filter_params.extend([location, location])
+                else:
+                    if location_country:
+                        fts_where_parts.append("dl.location_country = ?")
+                        fts_filter_params.append(location_country)
+                    
+                    if location_area:
+                        fts_where_parts.append("dl.location_area = ?")
+                        fts_filter_params.append(location_area)
+                
+                if max_depth is not None:
+                    fts_where_parts.append("dl.depth_max <= ?")
+                    fts_filter_params.append(max_depth)
+                
+                if min_depth is not None:
+                    fts_where_parts.append("dl.depth_max >= ?")
+                    fts_filter_params.append(min_depth)
+                
+                if dive_type:
+                    # Use simple equality check for exact match (case-insensitive)
+                    fts_where_parts.append("LOWER(dl.dive_type) = LOWER(?)")
+                    fts_filter_params.append(dive_type.strip())
+                
+                fts_where_sql = " AND ".join(fts_where_parts)
+                
+                sql = f"""
+                    SELECT 
+                        dl.id,
+                        dl.content,
+                        dl.location_site,
+                        dl.location_area,
+                        dl.location_country,
+                        dl.depth_max,
+                        dl.depth_avg,
+                        dl.length_minutes,
+                        dl.dive_type,
+                        dl.highlights,
+                        dl.date,
+                        dl.time,
+                        bm25(dive_logs_fts) as score
+                    FROM dive_logs_fts
+                    JOIN dive_logs dl ON dive_logs_fts.rowid = dl.rowid
+                    WHERE {fts_where_sql}
+                    ORDER BY score
+                    LIMIT ?
+                """
+                all_params = fts_params + fts_filter_params + [top_k]
+                
+                print(sql)
+                print(all_params)
+                cursor.execute(sql, all_params)
+                rows = cursor.fetchall()
+                
+                # Format results
+                formatted_results = []
+                for row in rows:
+                    dive_data = {
+                        "id": row["id"],
+                        "score": -row["score"] if row["score"] else 0.0,  # Negate BM25 score (lower is better in BM25, but we want higher)
+                        "content": row["content"] or "",
+                        "location_site": row["location_site"] or "",
+                        "location_area": row["location_area"] or "",
+                        "location_country": row["location_country"] or "",
+                        "depth_max": row["depth_max"],
+                        "depth_avg": row["depth_avg"],
+                        "length_minutes": row["length_minutes"],
+                        "dive_type": row["dive_type"] or "",
+                        "highlights": row["highlights"] or "",
+                        "date": row["date"] or "",
+                        "time": row["time"] or ""
+                    }
+                    formatted_results.append(dive_data)
             
             conn.close()
             return formatted_results
@@ -334,6 +548,7 @@ class SQLiteService:
         query: str = "",
         location_country: Optional[str] = None,
         location_area: Optional[str] = None,
+        location: Optional[str] = None,
         dive_type: Optional[str] = None,
         max_depth: Optional[int] = None,
         min_depth: Optional[int] = None,
@@ -344,8 +559,9 @@ class SQLiteService:
         
         Args:
             query: Optional search query text
-            location_country: Filter by country
-            location_area: Filter by area/region
+            location_country: Filter by country (exact match)
+            location_area: Filter by area/region (exact match)
+            location: Filter by location matching either country or area
             dive_type: Filter by dive type (e.g., "wreck", "cave", "recreational")
             max_depth: Maximum depth filter
             min_depth: Minimum depth filter
@@ -354,63 +570,20 @@ class SQLiteService:
         Returns:
             List of filtered dive log dictionaries
         """
-        # Build filters dictionary
-        filters = {}
-        
-        if location_country:
-            filters["location_country"] = {"$eq": location_country}
-        
-        if location_area:
-            filters["location_area"] = {"$eq": location_area}
-        
-        # Handle depth filters - need to be careful not to overwrite
-        if max_depth is not None and min_depth is not None:
-            # Both min and max depth - we'll filter client-side after search
-            # since SQLite WHERE clause can't easily combine $lte and $gte on same field
-            filters["depth_max"] = {"$lte": max_depth}  # Use max_depth for initial filter
-        elif max_depth is not None:
-            filters["depth_max"] = {"$lte": max_depth}
-        elif min_depth is not None:
-            filters["depth_max"] = {"$gte": min_depth}
-        
-        # Perform search with filters
+        # Perform search with filters (including dive_type which is now handled in SQL)
         search_query = query if query else "*"
-        results = self.search_dives(search_query, filters=filters if filters else None, top_k=top_k * 2)
+        results = self.search_dives(
+            query=search_query,
+            top_k=top_k,
+            location_country=location_country,
+            location_area=location_area,
+            location=location,
+            dive_type=dive_type,
+            max_depth=max_depth,
+            min_depth=min_depth
+        )
         
-        # Client-side filtering for dive_type (since it's comma-separated)
-        if dive_type:
-            types_to_match = [t.strip().lower() for t in dive_type.split(",")] if "," in dive_type else [dive_type.strip().lower()]
-            filtered_results = []
-            for result in results:
-                result_dive_type = result.get("dive_type", "").lower()
-                if any(dt in result_dive_type for dt in types_to_match):
-                    filtered_results.append(result)
-            results = filtered_results
-        
-        # Handle depth range filtering (client-side for min/max combination)
-        if min_depth is not None or max_depth is not None:
-            filtered_results = []
-            for result in results:
-                depth = result.get("depth_max")
-                if depth is not None:
-                    if min_depth is not None and max_depth is not None:
-                        # Both min and max
-                        if min_depth <= depth <= max_depth:
-                            filtered_results.append(result)
-                    elif min_depth is not None:
-                        # Only min
-                        if depth >= min_depth:
-                            filtered_results.append(result)
-                    elif max_depth is not None:
-                        # Only max (should already be filtered by SQL, but double-check)
-                        if depth <= max_depth:
-                            filtered_results.append(result)
-                else:
-                    # No depth info - exclude if we have depth filters
-                    pass
-            results = filtered_results[:top_k]
-        
-        return results[:top_k]
+        return results
     
     def create_dive_log(
         self,
@@ -434,7 +607,7 @@ class SQLiteService:
             date: Dive date in YYYY-MM-DD format
             dive_time: Dive time in HH:MM format (24-hour)
             max_depth: Maximum depth in meters
-            dive_type: Type of dive (e.g., "wreck", "recreational", "cave,recreational")
+            dive_type: Type of dive (single type: "wreck", "recreational", "cave", or "decompression")
             location_site: Name of the dive site (required)
             dive_length: Dive length in minutes
             location_area: Optional area/region

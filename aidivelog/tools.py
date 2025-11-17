@@ -15,7 +15,7 @@ _rag_service = SQLiteService()
 def search_dive_logs(
     query: Annotated[str, "Search query describing what kind of dive sites to find (e.g., 'wreck dives with good visibility')"],
     location: Optional[Annotated[str, "Location (country or area name)"]] = None,
-    dive_type: Optional[Annotated[str, "Dive type (wreck, cave, recreational, decompression)"]] = None,
+    dive_type: Optional[Annotated[str, "Dive type (single type: wreck, cave, recreational, or decompression)"]] = None,
     max_depth: Optional[Annotated[int, "Maximum depth in meters"]] = None,
     top_k: int = 10
 ) -> Dict[str, Any]:
@@ -36,44 +36,15 @@ def search_dive_logs(
         Dictionary with 'success' boolean and 'results' list of dive log dictionaries
     """
     try:
-        filters = {}
-        print(f"Location: {location}")
-        print(f"Dive type: {dive_type}")
-        print(f"Max depth: {max_depth}")
-        if location:
-            print(f"Adding location filter: {location}")
-            # Try to match location in country or area
-            filters["$or"] = [
-                {"location_country": {"$eq": location}},
-                {"location_area": {"$eq": location}}
-            ]
-        
-        # dive_type filtering is handled client-side in the RAG service
-        # (not added to filters here)
-        
-        if max_depth:
-            if "depth_max" in filters:
-                # Combine with existing depth filter
-                filters["$and"] = [
-                    filters.get("depth_max", {}),
-                    {"depth_max": {"$lte": max_depth}}
-                ]
-            else:
-                filters["depth_max"] = {"$lte": max_depth}
-        
-        filter_dict = filters if filters else None
-        
-        # If dive_type is specified, use filter_by_metadata which handles client-side filtering
-        if dive_type:
-            results = _rag_service.filter_by_metadata(
-                query=query,
-                location_country=location,
-                dive_type=dive_type,
-                max_depth=max_depth,
-                top_k=top_k
-            )
-        else:
-            results = _rag_service.search_dives(query, filters=filter_dict, top_k=top_k)
+        # Use filter_by_metadata for all searches to handle dive_type filtering
+        # It will delegate to search_dives with simple parameters
+        results = _rag_service.filter_by_metadata(
+            query=query,
+            location=location,  # Matches either country or area
+            dive_type=dive_type,
+            max_depth=max_depth,
+            top_k=top_k
+        )
         
         return {
             "success": True,
@@ -92,7 +63,7 @@ def create_dive_log(
     date: Annotated[str, "Dive date in YYYY-MM-DD format (e.g., '2024-03-15')"],
     time: Annotated[str, "Dive time in HH:MM format using 24-hour clock (e.g., '09:30' or '14:15')"],
     max_depth: Annotated[int, "Maximum depth reached during the dive in meters"],
-    dive_type: Annotated[str, "Type of dive (e.g., 'recreational', 'wreck', 'cave', 'decompression', or comma-separated like 'wreck,recreational')"],
+    dive_type: Annotated[str, "Type of dive (single type: 'recreational', 'wreck', 'cave', or 'decompression')"],
     location_site: Annotated[str, "Name of the dive site (e.g., 'Blue Corner', 'SS Thistlegorm')"],
     dive_length: Annotated[int, "Length of the dive in minutes"],
     location_area: Optional[Annotated[str, "Area or region where the dive site is located (e.g., 'Palau', 'Red Sea')"]] = None,

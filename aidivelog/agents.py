@@ -51,7 +51,7 @@ def create_dive_log_agent(model_client: ChatCompletionClient) -> AssistantAgent:
 
         Tools:
         - search_dive_logs(): Search the user's dive log for relevant information.
-            - You MUST always provide the query parameter to search the contents of the dive logs for key terms or phrases that are relevant to the user's question.
+            - When applicable, provide the query parameter to search the contents of the dive logs for key terms or phrases that are relevant to the user's question.
             - When applicable, extract and use filter parameters from the user's question (location, dive_type, max_depth)
             - Example: If user asks "What wreck dives did I do in Thailand?", use search_dive_logs(query="wreck dives", location="Thailand", dive_type="wreck")
         - get_all_dives(): Retrieve all dive logs from the database without any parameters.
