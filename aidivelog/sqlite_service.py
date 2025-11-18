@@ -97,6 +97,15 @@ class SQLiteService:
             FROM dive_logs
         """)
         
+        # Create user preferences table for memory persistence
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_preferences (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        
         conn.commit()
         conn.close()
     
@@ -334,9 +343,7 @@ class SQLiteService:
                     LIMIT ?
                 """
                 all_params = params + [top_k]
-                
-                print(sql)
-                print(all_params)
+
                 cursor.execute(sql, all_params)
                 rows = cursor.fetchall()
                 
@@ -426,9 +433,7 @@ class SQLiteService:
                     LIMIT ?
                 """
                 all_params = fts_params + fts_filter_params + [top_k]
-                
-                print(sql)
-                print(all_params)
+            
                 cursor.execute(sql, all_params)
                 rows = cursor.fetchall()
                 
@@ -667,4 +672,57 @@ class SQLiteService:
                 "success": False,
                 "error": str(e)
             }
+    
+    def save_user_preference(self, key: str, value: str) -> bool:
+        """
+        Save a user preference to the database.
+        
+        Args:
+            key: Preference key (e.g., 'user_name', 'preferred_units')
+            value: Preference value
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        print(f"Saving user preference: {key} = {value}")
+        try:
+            from datetime import datetime
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            updated_at = datetime.now().isoformat()
+            cursor.execute("""
+                INSERT OR REPLACE INTO user_preferences (key, value, updated_at)
+                VALUES (?, ?, ?)
+            """, (key, value, updated_at))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error saving user preference: {e}")
+            return False
+    
+    def get_all_user_preferences(self) -> Dict[str, str]:
+        """
+        Get all user preferences from the database.
+        
+        Returns:
+            Dictionary mapping preference keys to values
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT key, value FROM user_preferences
+            """)
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            return {row['key']: row['value'] for row in rows}
+        except Exception as e:
+            print(f"Error getting user preferences: {e}")
+            return {}
 

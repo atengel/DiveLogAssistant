@@ -3,11 +3,16 @@ Main application for the Unified Dive Assistant.
 Single agent handles both trip planning and dive log Q&A.
 """
 import asyncio
+import os
 import sys
+
+from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.ui import Console
 from aidivelog.agents import (
     create_dive_log_agent,
-    create_user_proxy,
     get_model_client,
+    create_user_memory,
+    initialize_user_memory,
 )
 
 
@@ -19,9 +24,13 @@ def print_welcome():
     print("\nType 'quit' or 'exit' to end the conversation.\n")
     print("="*80 + "\n")
 
-async def run_conversation(agent, user_proxy):
+async def run_conversation(agent:AssistantAgent):
     """Run a conversational loop with the agent."""
-    print("Assistant ready! How can I help you today?\n")
+    print("""Hey there! I'm your dive log assistant. How can I help you today?
+
+ßAsk me anything about your dive log. I can answer questions about your dives, tell you about your dive history, and help you add new dives to your log.
+    
+    """)
     
     while True:
         try:
@@ -38,21 +47,24 @@ async def run_conversation(agent, user_proxy):
             
             # Run the agent with the user's input (agent will use tools as needed)
             print("\nAssistant: ", end="", flush=True)
-            result = await agent.run(task=user_input)
-            
-            # Extract and print the response
-            if result and hasattr(result, 'messages') and result.messages:
-                response = result.messages[-1]
-                if hasattr(response, 'content'):
-                    print(response.content)
-                elif hasattr(response, 'text'):
-                    print(response.text)
-                else:
-                    print(str(response))
+            if os.environ.get("SHOW_TOOL_CALLS"):
+                await Console(agent.run_stream(task=user_input))
             else:
-                print("I'm processing your request...")
-            
-            print()  # Empty line for readability
+                result = await agent.run(task=user_input)
+                
+                # Extract and print the response
+                if result and hasattr(result, 'messages') and result.messages:
+                    response = result.messages[-1]
+                    if hasattr(response, 'content'):
+                        print(response.content)
+                    elif hasattr(response, 'text'):
+                        print(response.text)
+                    else:
+                        print(str(response))
+                else:
+                    print("I'm processing your request...")
+                
+                print()  # Empty line for readability
             
         except KeyboardInterrupt:
             print("\n\nConversation interrupted. Goodbye!")
@@ -68,22 +80,22 @@ def main():
     """Main function to run the unified dive assistant."""
     try:
         print_welcome()
-        
-        print("Initializing assistant...")
-        
+                
         # Create model client
         model_client = get_model_client()
         
-        # Create unified agent
-        agent = create_dive_log_agent(model_client)
+        # Create user memory
+        user_memory = create_user_memory()
         
-        # Create user proxy
-        user_proxy = create_user_proxy()
+        # Initialize memory (load any existing preferences)
+        asyncio.run(initialize_user_memory(user_memory))
         
-        print("Assistant initialized!\n")
+        # Create unified agent with memory
+        agent = create_dive_log_agent(model_client, user_memory)
         
+            
         # Run conversational loop
-        asyncio.run(run_conversation(agent, user_proxy))
+        asyncio.run(run_conversation(agent))
         
     except KeyboardInterrupt:
         print("\n\nConversation interrupted. Goodbye!")

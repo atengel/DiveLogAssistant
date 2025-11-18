@@ -7,8 +7,8 @@ from typing import Annotated, List, Dict, Any, Optional
 import aidivelog.config  # noqa: F401
 from aidivelog.sqlite_service import SQLiteService
 
-# Initialize RAG service (shared instance)
-_rag_service = SQLiteService()
+# Initialize SQLite service (shared instance)
+sqliteservice = SQLiteService()
 
 
 
@@ -38,7 +38,7 @@ def search_dive_logs(
     try:
         # Use filter_by_metadata for all searches to handle dive_type filtering
         # It will delegate to search_dives with simple parameters
-        results = _rag_service.filter_by_metadata(
+        results = sqliteservice.filter_by_metadata(
             query=query,
             location=location,  # Matches either country or area
             dive_type=dive_type,
@@ -96,7 +96,7 @@ def create_dive_log(
         Dictionary with 'success' boolean, 'dive_id' (UUID string), and optional 'error' message
     """
     try:
-        result = _rag_service.create_dive_log(
+        result = sqliteservice.create_dive_log(
             date=date,
             dive_time=time,
             max_depth=max_depth,
@@ -127,7 +127,7 @@ def get_all_dives() -> Dict[str, Any]:
         Dictionary with 'success' boolean and 'results' list of all dive log dictionaries
     """
     try:
-        results = _rag_service.get_all_dives()
+        results = sqliteservice.get_all_dives()
         return {
             "success": True,
             "results": results,
@@ -138,4 +138,90 @@ def get_all_dives() -> Dict[str, Any]:
             "success": False,
             "error": str(e),
             "results": []
+        }
+
+
+def save_user_preference(
+    key: Annotated[str, "Preference key (e.g., 'user_name', 'preferred_units')"],
+    value: Annotated[str, "Preference value to store"]
+) -> Dict[str, Any]:
+    """
+    Save a user preference to persistent storage.
+    
+    This tool saves user preferences directly to the database, making them available
+    across all future conversations. Use this tool whenever the user states a preference
+    such as their name or preferred units.
+    
+    Common preference keys:
+    - 'user_name': The user's name (e.g., "Alex", "Sarah")
+    - 'preferred_units': Unit system preference - must be either "metric" or "imperial"
+    
+    Args:
+        key: Preference key identifier
+        value: Preference value to store
+        
+    Returns:
+        Dictionary with 'success' boolean and optional 'error' message
+    """
+    try:
+        # Normalize preferred_units to "metric" or "imperial"
+        if key == 'preferred_units':
+            value_lower = value.lower()
+            if 'metric' in value_lower:
+                value = 'metric'
+            elif 'imperial' in value_lower:
+                value = 'imperial'
+            else:
+                # Default to metric if unclear
+                value = 'metric'
+        
+        success = sqliteservice.save_user_preference(key, value)
+        if success:
+            return {
+                "success": True,
+                "message": f"Preference '{key}' saved successfully"
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Failed to save preference"
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+def get_user_preference(
+    key: Annotated[str, "Preference key to retrieve (e.g., 'user_name', 'preferred_units')"]
+) -> Dict[str, Any]:
+    """
+    Retrieve a user preference from persistent storage.
+    
+    Use this tool to check if a preference has been stored previously.
+    
+    Args:
+        key: Preference key to retrieve
+        
+    Returns:
+        Dictionary with 'success' boolean, 'value' if found, and optional 'error' message
+    """
+    try:
+        value = sqliteservice.get_user_preference(key)
+        if value is not None:
+            return {
+                "success": True,
+                "value": value
+            }
+        else:
+            return {
+                "success": True,
+                "value": None,
+                "message": f"Preference '{key}' not found"
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
         }
