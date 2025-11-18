@@ -17,7 +17,3 @@ def get_openai_api_key() -> str:
     if not api_key:
         raise ValueError("OPENAI_API_KEY environment variable not set")
     return api_key
-
-
-# Pinecone API key function removed - using SQLite instead
-

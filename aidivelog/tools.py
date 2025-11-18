@@ -13,8 +13,8 @@ sqliteservice = SQLiteService()
 
 
 def search_dive_logs(
-    query: Annotated[str, "Search query describing what kind of dive sites to find (e.g., 'wreck dives with good visibility')"],
-    location: Optional[Annotated[str, "Location (country or area name)"]] = None,
+    query: Annotated[str, "Comma-separated query of key terms for full-text search of dive logs (e.g., 'wreck, manta rays, whale sharks')"],
+    location: Optional[Annotated[str, "Location mentioned by user - can be a dive site name, area, or country (e.g., 'Blue Corner', 'Malaysia', 'Red Sea', 'Cozumel'). When provided, this will be used to search across all location fields."]] = None,
     dive_type: Optional[Annotated[str, "Dive type (single type: wreck, cave, recreational, or decompression)"]] = None,
     max_depth: Optional[Annotated[int, "Maximum depth in meters"]] = None,
     top_k: int = 10
@@ -27,7 +27,9 @@ def search_dive_logs(
     
     Args:
         query: Search query describing what kind of dive sites to find (e.g., "wreck dives with good visibility")
-        location: ALWAYS use this when user mentions a specific location, country, or area (e.g., "Malaysia", "Red Sea", "Cozumel")
+        location: ALWAYS use this when user mentions ANY location - whether it's a dive site name, area, or country.
+                  Examples: "Blue Corner", "SS Thistlegorm", "Malaysia", "Red Sea", "Cozumel", "Shark Reef".
+                  This single parameter will search across dive site names, areas, and countries.
         dive_type: ALWAYS use this when user mentions a specific dive type (e.g., "wreck", "cave", "recreational", "wall", "drift")
         max_depth: ALWAYS use this when user mentions depth constraints (e.g., "shallow dives", "under 30 meters", "deep dives")
         top_k: Number of results to return (default: 10). Increase for broader searches, decrease for more focused results.
@@ -37,10 +39,13 @@ def search_dive_logs(
     """
     try:
         # Use filter_by_metadata for all searches to handle dive_type filtering
-        # It will delegate to search_dives with simple parameters
+        # When location is provided, pass it to all location-related parameters
+        # to search across dive site names, areas, and countries
         results = sqliteservice.filter_by_metadata(
             query=query,
-            location=location,  # Matches either country or area
+            location_site=location,  # Also search dive site names
+            location_country=location,  # Also search countries
+            location_area=location,  # Also search areas
             dive_type=dive_type,
             max_depth=max_depth,
             top_k=top_k
@@ -185,40 +190,6 @@ def save_user_preference(
             return {
                 "success": False,
                 "error": "Failed to save preference"
-            }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
-
-
-def get_user_preference(
-    key: Annotated[str, "Preference key to retrieve (e.g., 'user_name', 'preferred_units')"]
-) -> Dict[str, Any]:
-    """
-    Retrieve a user preference from persistent storage.
-    
-    Use this tool to check if a preference has been stored previously.
-    
-    Args:
-        key: Preference key to retrieve
-        
-    Returns:
-        Dictionary with 'success' boolean, 'value' if found, and optional 'error' message
-    """
-    try:
-        value = sqliteservice.get_user_preference(key)
-        if value is not None:
-            return {
-                "success": True,
-                "value": value
-            }
-        else:
-            return {
-                "success": True,
-                "value": None,
-                "message": f"Preference '{key}' not found"
             }
     except Exception as e:
         return {

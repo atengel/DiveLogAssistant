@@ -10,7 +10,7 @@ from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.ui import Console
 from aidivelog.agents import (
     create_dive_log_agent,
-    get_model_client,
+    get_openai_client,
     create_user_memory,
     initialize_user_memory,
 )
@@ -19,7 +19,7 @@ from aidivelog.agents import (
 def print_welcome():
     """Print welcome message."""
     print("\n" + "="*80)
-    print("DIVE ASSISTANT - Dive Log Q&A")
+    print("DIVE LOG ASSISTANT")
     print("="*80)
     print("\nType 'quit' or 'exit' to end the conversation.\n")
     print("="*80 + "\n")
@@ -28,7 +28,7 @@ async def run_conversation(agent:AssistantAgent):
     """Run a conversational loop with the agent."""
     print("""Hey there! I'm your dive log assistant. How can I help you today?
 
-ßAsk me anything about your dive log. I can answer questions about your dives, tell you about your dive history, and help you add new dives to your log.
+Ask me anything about your dive log. I can answer questions about your dives, tell you about your dive history, and help you add new dives to your log.
     
     """)
     
@@ -47,7 +47,8 @@ async def run_conversation(agent:AssistantAgent):
             
             # Run the agent with the user's input (agent will use tools as needed)
             print("\nAssistant: ", end="", flush=True)
-            if os.environ.get("SHOW_TOOL_CALLS"):
+            show_tool_calls = os.environ.get("SHOW_TOOL_CALLS", 'False').lower() in ('true', '1')
+            if show_tool_calls:
                 await Console(agent.run_stream(task=user_input))
             else:
                 result = await agent.run(task=user_input)
@@ -82,7 +83,7 @@ def main():
         print_welcome()
                 
         # Create model client
-        model_client = get_model_client()
+        model_client = get_openai_client()
         
         # Create user memory
         user_memory = create_user_memory()

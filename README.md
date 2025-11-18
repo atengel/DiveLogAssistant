@@ -19,11 +19,8 @@ An intelligent dive log management system that uses AI to help you search, query
 
 ## Installation
 
-### 1. Install Poetry (if not already installed)
+### 1. Install [Poetry](https://python-poetry.org/docs/) (if not already installed)
 
-```bash
-curl -sSL https://install.python-poetry.org | python3 -
-```
 
 ### 2. Install Project Dependencies
 
@@ -46,6 +43,7 @@ Create a `.env` file in the project root directory:
 
 ```bash
 OPENAI_API_KEY=your-openai-api-key-here
+SHOW_TOOL_CALLS=true|false 
 ```
 
 Alternatively, you can export it in your shell:
@@ -56,7 +54,7 @@ export OPENAI_API_KEY="your-openai-api-key"
 
 ### 2. Initialize Database and Populate Sample Data
 
-Before running the assistant, you need to populate the SQLite database with dive log data:
+Before running the assistant, you can populate the SQLite database with sample dive log data:
 
 ```bash
 poetry run python populate_dive_log.py
@@ -155,7 +153,7 @@ Assistant: Based on your dive logs, I found the following wreck dives in Egypt:
 
 You: Add a new dive: I did a night dive yesterday at 8pm on the house reef in Bonaire. It was 48 minutes, max depth 20 meters, average 15 meters. We saw octopuses and bioluminescent plankton.
 
-Assistant: I've successfully created a new dive log entry for your night dive in Bonaire. The dive has been saved with ID: [uuid].
+Assistant: I've successfully created a new dive log entry for your night dive in Bonaire. 
 
 You: quit
 

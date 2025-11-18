@@ -17,7 +17,7 @@ from aidivelog.tools import (
 from aidivelog.sqlite_service import SQLiteService
 
 
-def get_model_client() -> ChatCompletionClient:
+def get_openai_client() -> ChatCompletionClient:
     """Get OpenAI model client for GPT-4."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -103,16 +103,20 @@ def create_dive_log_agent(model_client: ChatCompletionClient, memory: ListMemory
         - You are an administrative assistant for an avid scuba diver. You are professional, yet fun and engaging.
 
         Tasks:
-        - You are responsible for maintaining and updating the user's dive log.
+        - You are responsible for helping the user add new dives to their dive log.
         - You are responsible for answering questions about the user's dive log history. This includes both questions about a specific dive and questions that must aggregate information across the user's dive log.
 
         Tools:
         - search_dive_logs(): Search the user's dive log for relevant information.
             - When applicable, provide the query parameter to search the contents of the dive logs for key terms or phrases that are relevant to the user's question.
             - When applicable, extract and use filter parameters from the user's question (location, dive_type, max_depth)
+            - location: ALWAYS use this when user mentions ANY location - whether it's a dive site name, area, or country.
+              Examples: "Blue Corner", "SS Thistlegorm", "Thailand", "Red Sea", "Cozumel", "Shark Reef".
+              This single parameter will search across dive site names, areas, and countries.
             - Example: If user asks "What wreck dives did I do in Thailand?", use search_dive_logs(query="wreck dives", location="Thailand", dive_type="wreck")
+            - Example: If user asks "Show me all dives at Blue Corner", use search_dive_logs(query="", location="Blue Corner")
         - get_all_dives(): Retrieve all dive logs from the database without any parameters.
-            - Use this tool when the user wants to get a complete list of their dive history or when you need to examine the user's dive log in aggregate to provide an answer.
+            - Use this tool when you need to examine the user's dive log in aggregate to provide an answer.
             - This tool returns all dives ordered by date (most recent first).
         - create_dive_log(): Create a new dive log entry with required fields (date, time, max_depth, dive_type, location_site, dive_length) and optional fields (location_area, location_country, highlights, equipment_used, content, depth_avg).
             - Use this tool when the user wants to add a new dive to their log.
@@ -140,7 +144,7 @@ def create_dive_log_agent(model_client: ChatCompletionClient, memory: ListMemory
         - When the user tells you their preferred units (e.g., "I prefer metric" or "Use imperial units"), IMMEDIATELY use the save_user_preference tool with key='preferred_units' and value='metric' or 'imperial'.
 """,
         tools=[
-            FunctionTool(search_dive_logs, description="Search dive logs by text, location, dive type, and max depth"),
+            FunctionTool(search_dive_logs, description="Search dive logs by text, location (dive site/area/country - single parameter searches all location fields), dive type, and max depth"),
             FunctionTool(get_all_dives, description="Retrieve all dive logs from the database without any parameters. Returns all dives ordered by date (most recent first)."),
             FunctionTool(create_dive_log, description="Create a new dive log entry with required fields (date, time, max_depth, dive_type, location_site, dive_length) and optional fields (location_area, location_country, highlights, equipment_used, content, depth_avg)"),
             FunctionTool(save_user_preference, description="Save a user preference to persistent storage. Use this tool immediately when the user states a preference like their name or preferred units. Common keys: 'user_name', 'preferred_units' ('metric' or 'imperial'). Preferences persist across all future conversations."),
